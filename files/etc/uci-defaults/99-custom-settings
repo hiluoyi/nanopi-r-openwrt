@@ -1,0 +1,15 @@
+#!/bin/sh
+#
+# 首次开机自动执行一次，执行成功后本文件自动删除
+#
+uci -q batch <<-EOI
+	set system.@system[0].hostname='NanoPi'
+	set system.@system[0].zonename='Asia/Shanghai'
+	set system.@system[0].timezone='CST-8'
+	set system.ntp.server='ntp.aliyun.com ntp1.aliyun.com cn.pool.ntp.org time.windows.com'
+	set luci.main.mediaurlbase='/luci-static/argon'
+	commit system
+	commit luci
+EOI
+
+exit 0

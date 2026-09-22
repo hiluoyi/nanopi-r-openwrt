@@ -1,0 +1,212 @@
+name: Build OpenWrt
+
+on:
+  workflow_dispatch:
+    inputs:
+      make_release:
+        description: '构建完成后发布 Release'
+        type: boolean
+        default: true
+      ssh_debug:
+        description: '编译前开启 SSH 调试（tmate）'
+        type: boolean
+        default: false
+  schedule:
+    # 每月 1 号 北京时间 04:00 自动构建一次
+    - cron: '0 20 1 * *'
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-25.12
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    name: Build R2S / R4S / R5S
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: |
+          echo "清理前:" && df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /usr/local/share/powershell \
+                      /usr/local/graalvm /usr/local/.ghcup \
+                      "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}"
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile || true
+          echo "清理后:" && df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo timedatectl set-timezone "$TZ"
+          sudo apt-get update
+          # 官方要求的必装依赖，任一失败即终止
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+            gettext git libncurses-dev libssl-dev python3-setuptools python3-dev \
+            python3-venv python3-pyelftools rsync swig unzip zlib1g-dev file wget
+          # 加速/辅助用的可选依赖，装不上不影响编译
+          sudo apt-get install -y --no-install-recommends \
+            ccache ecj fastjar java-propose-classpath libelf-dev libglib2.0-dev \
+            device-tree-compiler python3-ply python3-docutils \
+            qemu-utils subversion upx-ucl zstd libzstd-dev time || true
+          sudo apt-get clean
+
+      - name: Set build date
+        run: |
+          echo "BUILD_DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
+          echo "BUILD_DATE_HUMAN=$(date +'%Y-%m-%d %H:%M')" >> $GITHUB_ENV
+
+      - name: Clone OpenWrt source
+        run: |
+          git clone --depth=1 -b "$REPO_BRANCH" "$REPO_URL" openwrt
+          cd openwrt
+          echo "SOURCE_COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Cache downloads and ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/dl
+            openwrt/.ccache
+          key: owrt-${{ env.REPO_BRANCH }}-${{ hashFiles('config/*.config') }}-${{ env.BUILD_DATE }}
+          restore-keys: |
+            owrt-${{ env.REPO_BRANCH }}-${{ hashFiles('config/*.config') }}-
+            owrt-${{ env.REPO_BRANCH }}-
+
+      - name: Update and install feeds
+        run: |
+          cd openwrt
+          if [ -f "$GITHUB_WORKSPACE/scripts/feeds.sh" ]; then
+            bash "$GITHUB_WORKSPACE/scripts/feeds.sh"
+          fi
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Prefetch runtime assets
+        run: |
+          ASSET_DIR="$GITHUB_WORKSPACE/files/etc/openclash"
+          mkdir -p "$ASSET_DIR/core"
+
+          curl -fsSL --retry 3 --retry-delay 5 -o /tmp/core.tar.gz \
+            "https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz"
+          tar -xzf /tmp/core.tar.gz -C /tmp
+          mv /tmp/clash "$ASSET_DIR/core/clash_meta"
+          chmod +x "$ASSET_DIR/core/clash_meta"
+          # 架构不符则中止，避免产出无法运行的固件
+          file "$ASSET_DIR/core/clash_meta" | grep -q "ARM aarch64" \
+            || { echo "::error::二进制架构不是 aarch64，已中止"; exit 1; }
+
+          curl -fsSL --retry 3 --retry-delay 5 -o "$ASSET_DIR/Country.mmdb" \
+            "https://testingcf.jsdelivr.net/gh/alecthw/mmdb_china_ip_list@release/lite/Country.mmdb"
+          curl -fsSL --retry 3 --retry-delay 5 -o "$ASSET_DIR/GeoSite.dat" \
+            "https://testingcf.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat"
+          curl -fsSL --retry 3 --retry-delay 5 -o "$ASSET_DIR/GeoIP.dat" \
+            "https://testingcf.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat"
+
+          ls -lh "$ASSET_DIR" "$ASSET_DIR/core"
+
+      - name: Apply customizations
+        run: |
+          cd openwrt
+          mkdir -p ./files
+          cp -rf "$GITHUB_WORKSPACE/files/." ./files/
+          bash "$GITHUB_WORKSPACE/scripts/customize.sh"
+
+      - name: Generate .config
+        run: |
+          cd openwrt
+          cat "$GITHUB_WORKSPACE"/config/*.config > .config
+          make defconfig
+          echo "===== 最终生效的机型 ====="
+          grep -E '^CONFIG_TARGET_DEVICE_.*=y' .config
+          echo "===== 被 defconfig 丢弃的包（拼错或不存在）====="
+          grep -oE '^CONFIG_PACKAGE_[a-zA-Z0-9_.+-]+' "$GITHUB_WORKSPACE"/config/*.config \
+            | sed 's/.*://' | sort -u | while read -r p; do
+              grep -q "^${p}=y\|^${p}=m" .config || echo "  !! $p"
+            done
+
+      - name: SSH debug session
+        if: inputs.ssh_debug
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+
+      - name: Download package sources
+        run: |
+          cd openwrt
+          make download -j8
+          # 清掉下载中断留下的残片（只看 dl 顶层的文件）。
+          # 千万不能递归：dl/go-mod-cache 里有上万个几百字节的 Go 模块文件，
+          # 递归删除会在缓存命中时掏空模块缓存，导致 Go 包编译报「no required module」。
+          find dl -maxdepth 1 -type f -size -1024c -exec ls -lh {} \; -exec rm -f {} \;
+
+      - name: Compile firmware
+        id: compile
+        run: |
+          cd openwrt
+          echo "使用 $(nproc) 线程编译"
+          make -j"$(nproc)" || {
+            echo "::warning::并行编译失败，回退到单线程输出详细日志"
+            make -j1 V=s
+          }
+          df -h /
+
+      - name: Organize artifacts
+        run: |
+          cd openwrt/bin/targets/rockchip/armv8
+          rm -rf packages feeds.buildinfo version.buildinfo
+          cp "$GITHUB_WORKSPACE/openwrt/.config" ./config.buildinfo
+          echo "FIRMWARE_DIR=$PWD" >> $GITHUB_ENV
+          ls -lh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanopi-firmware-${{ env.BUILD_DATE }}
+          path: ${{ env.FIRMWARE_DIR }}
+          retention-days: 30
+
+      - name: Publish release
+        if: inputs.make_release || github.event_name == 'schedule'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.BUILD_DATE }}
+          name: NanoPi R2S / R4S / R5S ${{ env.BUILD_DATE }}
+          files: ${{ env.FIRMWARE_DIR }}/*
+          body: |
+            ## NanoPi R2S / R4S / R5S OpenWrt 固件
+
+            | 项目 | 内容 |
+            |---|---|
+            | 构建时间 | ${{ env.BUILD_DATE_HUMAN }} (UTC+8) |
+            | 源码 | ImmortalWrt `${{ env.REPO_BRANCH }}` @ `${{ env.SOURCE_COMMIT }}` |
+            | 内核 | Linux 6.12 |
+            | 包管理器 | apk |
+
+            ### 默认设置
+            - 管理地址 **http://192.168.2.1**
+            - 用户名 `root`，**首次登录无密码，请立刻设置密码**
+            - 主机名 `NanoPi`，时区 `Asia/Shanghai`
+            - SSH 主机密钥由设备首次开机随机生成，不预置
+
+            ### 选哪个文件
+            - `*-ext4-sysupgrade.img.gz` —— 需要装 Docker / 大插件、想扩容根分区的选这个
+            - `*-squashfs-sysupgrade.img.gz` —— 想要 overlay 和一键恢复出厂的选这个
+            - 认准文件名里的机型：`nanopi-r2s` / `nanopi-r4s` / `nanopi-r5s`
+
+            ### 刷机
+            解压出 `.img` 后用 balenaEtcher 或 `dd` 写入 TF 卡：
+            ```
+            gzip -d xxx-sysupgrade.img.gz
+            sudo dd if=xxx-sysupgrade.img of=/dev/sdX bs=4M status=progress conv=fsync
+            ```
+
+            校验值见 `sha256sums`，编译配置见 `config.buildinfo`。
