@@ -17,7 +17,7 @@ echo "    默认 LAN IP  -> 192.168.2.1"
 # ---------------------------------------------------------------
 # 默认主机名
 # ---------------------------------------------------------------
-sed -i "s/hostname='ImmortalWrt'/hostname='NanoPi'/g" package/base-files/files/bin/config_generate
+sed -i -E "s/hostname='(ImmortalWrt|LEDE|OpenWrt)'/hostname='NanoPi'/g" package/base-files/files/bin/config_generate
 echo "    默认主机名   -> NanoPi"
 
 # ---------------------------------------------------------------

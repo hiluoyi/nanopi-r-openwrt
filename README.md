@@ -20,6 +20,17 @@
 - **`-ext4-sysupgrade.img.gz`** — 可以用 `resize2fs` 扩容根分区，要装 Docker 或大插件选它
 - **`-squashfs-sysupgrade.img.gz`** — 带 overlay，支持一键恢复出厂设置，日常用选它
 
+## R4S 单独构建（LEDE）
+
+部分 NanoPi R4S 在 ImmortalWrt 25.12 的开源引导链下无法启动（只亮 Power 灯），
+同一块板用 LEDE 固件可以正常运行。因此 R4S 另有一条基于
+[coolsnowwolf/lede](https://github.com/coolsnowwolf/lede) 的构建：
+
+- 工作流：`.github/workflows/build-r4s-lede.yml`（Actions → Build R4S (LEDE)，手动触发）
+- 配置：`config-lede/r4s.config`
+- 发布标签：`r4s-lede-日期`
+- **默认密码是 `password`**（LEDE 默认），与 ImmortalWrt 版的空密码不同
+
 ## 默认设置
 
 | 项 | 值 |
