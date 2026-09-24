@@ -1,9 +1,9 @@
 # NanoPi R2S / R4S / R5S OpenWrt 固件
 
 基于 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) `openwrt-25.12` 分支，
-用 GitHub Actions 自动编译 NanoPi R2S、R4S、R5S 三款软路由的固件。
+用 GitHub Actions 自动编译 NanoPi R2S、R4S、R5S 三款软路由的固件：R2S、R5S 基于 ImmortalWrt，R4S 基于 LEDE 单独构建（原因见下文）。
 
-三台机器同属 `rockchip/armv8`（aarch64_generic）架构，**一次编译同时产出三个机型的固件**。
+R2S 和 R5S 同属 `rockchip/armv8`（aarch64_generic）架构，**一次编译同时产出两个机型的固件**。
 
 ## 下载
 
@@ -12,7 +12,7 @@
 | 文件 | 适用 |
 |---|---|
 | `*friendlyarm_nanopi-r2s*` | NanoPi R2S (RK3328) |
-| `*friendlyarm_nanopi-r4s*` | NanoPi R4S (RK3399) |
+| `*friendlyarm_nanopi-r4s*`（在 `r4s-lede-` 开头的发布里） | NanoPi R4S (RK3399) |
 | `*friendlyarm_nanopi-r5s*` | NanoPi R5S (RK3568) |
 
 每个机型有两种根文件系统：
@@ -49,7 +49,7 @@
 ## 刷机
 
 ```bash
-gzip -d immortalwrt-*-friendlyarm_nanopi-r4s-squashfs-sysupgrade.img.gz
+gzip -d immortalwrt-*-friendlyarm_nanopi-r5s-squashfs-sysupgrade.img.gz
 sudo dd if=immortalwrt-*.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
@@ -93,7 +93,7 @@ Windows 下用 [balenaEtcher](https://etcher.balena.io/) 或 Rufus 写卡即可�
 | 构建方式 | 全量编译所有 luci-app → 生成 ImageBuilder → 二次打包 | 只编实际需要的包，一步出固件 |
 | 增量缓存 | 依赖作者私人仓库的 30GB btrfs 镜像 | `actions/cache` 缓存 `dl` 和 `ccache` |
 | 打补丁 | `grep -n` 取行号后 `sed Nd` 删行 | `uci-defaults` + 标准 patch |
-| 机型 | 每个机型单独全量编译 | 三机型一次编译 |
+| 机型 | 每个机型单独全量编译 | R2S/R5S 一次编译，R4S 单独编译 |
 | SSH 主机密钥 | 固件内预置静态密钥（所有用户共用） | 不预置，设备首次开机随机生成 |
 
 原项目那套两阶段流水线是为"一次编译供给所有机型的全量离线软件源"设计的，

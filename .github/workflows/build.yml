@@ -22,7 +22,7 @@ env:
 
 jobs:
   build:
-    name: Build R2S / R4S / R5S
+    name: Build R2S / R5S
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -179,10 +179,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.BUILD_DATE }}
-          name: NanoPi R2S / R4S / R5S ${{ env.BUILD_DATE }}
+          name: NanoPi R2S / R5S ${{ env.BUILD_DATE }}
           files: ${{ env.FIRMWARE_DIR }}/*
           body: |
-            ## NanoPi R2S / R4S / R5S OpenWrt 固件
+            ## NanoPi R2S / R5S OpenWrt 固件
 
             | 项目 | 内容 |
             |---|---|
@@ -200,7 +200,7 @@ jobs:
             ### 选哪个文件
             - `*-ext4-sysupgrade.img.gz` —— 需要装 Docker / 大插件、想扩容根分区的选这个
             - `*-squashfs-sysupgrade.img.gz` —— 想要 overlay 和一键恢复出厂的选这个
-            - 认准文件名里的机型：`nanopi-r2s` / `nanopi-r4s` / `nanopi-r5s`
+            - 认准文件名里的机型：`nanopi-r2s` / `nanopi-r5s`（R4S 见 `r4s-lede-` 开头的发布）
 
             ### 刷机
             解压出 `.img` 后用 balenaEtcher 或 `dd` 写入 TF 卡：
